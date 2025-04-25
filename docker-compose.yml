@@ -1,0 +1,37 @@
+services:
+  activity-log-service:
+    # Build context is the directory containing this docker-compose.yml file
+    build: ./
+    ports:
+     - "5004:5003"      
+      # Map host port 5004 to the container's exposed port 5003
+      # We keep 5004 on the host side to avoid conflicts if you run the main compose file later
+ 
+    environment:
+      # Set environment variables to point to the mock service
+      - DB_INTERACT_SERVICE_HOST=mock-db-interact # Service name of the mock
+      - DB_INTERACT_SERVICE_PORT=5002
+      - DB_INTERACT_LOG_ACTIVITY_ROUTE=/log_activity # Route for logging activities
+    networks:
+      - activity_log_network # Connect to a dedicated network for this compose file
+    # Add dependency on mock-db-interact to ensure it starts first (optional but good practice)
+    depends_on:
+      - mock-db-interact
+
+  mock-db-interact: # Service name for the mock database interaction service
+    # Build context is relative to the location of this docker-compose.yml file
+    build: ../mock-db-interact # Go up one directory, then into mock-db-interact
+    ports:
+      - "5002:5002"
+      # Map host port 5002 to the container's exposed port 5002
+      # This is the same port as in the main compose file to keep consistency
+    networks:
+      - activity_log_network # Connect to the dedicated network
+    # No need for database environment variables here as it's a mock
+
+  # Note: The child-profile-service is NOT included in this compose file,
+  # as this file is specifically for testing the activity-log-service and its interaction with the mock DB.
+
+networks:
+  activity_log_network: # Define a dedicated network for this compose file
+    driver: bridge # Use the default bridge network driver

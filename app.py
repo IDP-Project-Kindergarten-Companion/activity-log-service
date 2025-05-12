@@ -18,7 +18,7 @@ app = Flask(__name__)
 
 # --- Configuration ---
 # Service specific fallback, but ideally set via environment variables
-app.config['SECRET_KEY'] = os.environ.get('ACTIVITY_LOG_SECRET_KEY', 'a_fallback_secret_for_activity_log')
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'a_fallback_secret_for_activity_log')
 
 # Configuration for the database interaction service
 DB_INTERACT_SERVICE_HOST = os.environ.get('DB_INTERACT_SERVICE_HOST', 'db-interact-svc.kindergarten-app.svc.cluster.local')

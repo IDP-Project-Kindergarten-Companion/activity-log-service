@@ -25,13 +25,8 @@ DB_INTERACT_GET_ACTIVITIES_ROUTE = os.environ.get('DB_INTERACT_GET_ACTIVITIES_RO
 app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'default_jwt_secret_key_needs_change_in_env')
 app.config['JWT_ALGORITHM'] = os.environ.get('JWT_ALGORITHM', 'HS256')
 
-logging.basicConfig(level=logging.INFO)
-# Use app.logger after app is created
-# app.logger.info("Activity Log Service starting up...")
-# app.logger.info(f"DB Interact Service Target for POST: http://{DB_INTERACT_SERVICE_HOST}:{DB_INTERACT_SERVICE_PORT}{DB_INTERACT_LOG_ACTIVITY_ROUTE}")
-# app.logger.info(f"DB Interact Service Target for GET: http://{DB_INTERACT_SERVICE_HOST}:{DB_INTERACT_SERVICE_PORT}{DB_INTERACT_GET_ACTIVITIES_ROUTE}")
-# if app.config['JWT_SECRET_KEY'] == 'default_jwt_secret_key_needs_change_in_env':
-#     app.logger.warning("CRITICAL: JWT_SECRET_KEY is using a default fallback. Set this in your environment!")
+# Configure logging after app is created, typically in if __name__ == '__main__' or a factory
+# logging.basicConfig(level=logging.INFO) # This is a global config, Flask uses app.logger
 
 # --- Decorators ---
 def token_required(f):
@@ -102,12 +97,9 @@ def send_log_to_db_interact(activity_type, child_id_value, details_payload, user
 
 def request_get_activities_from_db_interact(child_id_value, user_token, params=None):
     """Requests activity data FOR A CHILD from the database interaction service."""
-    # The db-interact service's /data/activities endpoint handles authorization
-    # based on the user_token and the child_id.
     db_interact_url = f"http://{DB_INTERACT_SERVICE_HOST}:{DB_INTERACT_SERVICE_PORT}{DB_INTERACT_GET_ACTIVITIES_ROUTE}"
     headers = {"Authorization": f"Bearer {user_token}"}
     
-    # Ensure child_id is always part of the params for the GET request
     query_params = params.copy() if params else {}
     query_params["child_id"] = child_id_value
 
@@ -147,18 +139,26 @@ def log_meal():
     child_id = data.get("childId")
     try:
         db_response = send_log_to_db_interact("meal", child_id, meal_details, g.current_user_token)
-        # ... (response handling as before) ...
+        
         try:
             db_response_json = db_response.json()
         except requests.exceptions.JSONDecodeError:
+            # If db-interact returns non-JSON (e.g., HTML error page or empty on some errors)
             db_response_json = {"raw_response": db_response.text, "status_code_from_db": db_response.status_code}
+            # If it's an error status from db-interact, log it and return appropriate error
             if db_response.status_code >= 400 :
                  app.logger.error(f"db-interact returned error for meal log: {db_response.status_code} - {db_response.text[:500]}")
                  return jsonify({"error": "Failed to log meal via database service", "details": db_response_json}), db_response.status_code
+        
+        # If db-interact call was successful (e.g. 201) or returned a structured error (e.g. 400 with JSON)
         return jsonify({"message": "Meal log forwarded to database service", "db_service_response": db_response_json}), db_response.status_code
-    except (ConnectionError, TimeoutError, Exception) as e:
-        app.logger.error(f"Error in log_meal: {e}")
-        return jsonify({"error": str(e)}), 503
+
+    except (ConnectionError, TimeoutError) as e: # More specific exceptions
+        app.logger.error(f"Communication error with db-interact for log_meal: {e}")
+        return jsonify({"error": f"Error communicating with database service: {str(e)}"}), 503 
+    except Exception as e: # Catch-all for other unexpected errors
+        app.logger.error(f"Unexpected error in log_meal: {e}\n{traceback.format_exc()}")
+        return jsonify({"error": "An internal server error occurred"}), 500
 
 
 @app.route('/log/nap', methods=['POST'])
@@ -184,7 +184,7 @@ def log_nap():
     child_id = data.get("childId")
     try:
         db_response = send_log_to_db_interact("nap", child_id, nap_details, g.current_user_token)
-        # ... (response handling as before) ...
+        
         try:
             db_response_json = db_response.json()
         except requests.exceptions.JSONDecodeError:
@@ -192,10 +192,14 @@ def log_nap():
             if db_response.status_code >= 400 :
                  app.logger.error(f"db-interact returned error for nap log: {db_response.status_code} - {db_response.text[:500]}")
                  return jsonify({"error": "Failed to log nap via database service", "details": db_response_json}), db_response.status_code
+        
         return jsonify({"message": "Nap log forwarded to database service", "db_service_response": db_response_json}), db_response.status_code
-    except (ConnectionError, TimeoutError, Exception) as e:
-        app.logger.error(f"Error in log_nap: {e}")
-        return jsonify({"error": str(e)}), 503
+    except (ConnectionError, TimeoutError) as e:
+        app.logger.error(f"Communication error with db-interact for log_nap: {e}")
+        return jsonify({"error": f"Error communicating with database service: {str(e)}"}), 503
+    except Exception as e:
+        app.logger.error(f"Unexpected error in log_nap: {e}\n{traceback.format_exc()}")
+        return jsonify({"error": "An internal server error occurred"}), 500
 
 
 @app.route('/log/drawing', methods=['POST'])
@@ -203,7 +207,7 @@ def log_nap():
 def log_drawing():
     data = request.get_json()
     if not data: return jsonify({"error": "Invalid JSON data"}), 400
-    required_fields = ["childId", "timestamp", "photoUrl"] # Keep photoUrl from request
+    required_fields = ["childId", "timestamp", "photoUrl"] 
     for field in required_fields:
         if field not in data: return jsonify({"error": f"Missing field: {field}"}), 400
     try:
@@ -216,12 +220,12 @@ def log_drawing():
     drawing_details = {
         "timestamp": data.get("timestamp"), "title": data.get("title"), 
         "description": data.get("description"), 
-        "image_url": data.get("photoUrl") # CORRECTED: Send as image_url to db-interact
+        "image_url": data.get("photoUrl") 
     }
     child_id = data.get("childId")
     try:
         db_response = send_log_to_db_interact("drawing", child_id, drawing_details, g.current_user_token)
-        # ... (response handling as before) ...
+        
         try:
             db_response_json = db_response.json()
         except requests.exceptions.JSONDecodeError:
@@ -229,10 +233,14 @@ def log_drawing():
             if db_response.status_code >= 400 :
                  app.logger.error(f"db-interact returned error for drawing log: {db_response.status_code} - {db_response.text[:500]}")
                  return jsonify({"error": "Failed to log drawing via database service", "details": db_response_json}), db_response.status_code
+        
         return jsonify({"message": "Drawing log forwarded to database service", "db_service_response": db_response_json}), db_response.status_code
-    except (ConnectionError, TimeoutError, Exception) as e:
-        app.logger.error(f"Error in log_drawing: {e}")
-        return jsonify({"error": str(e)}), 503
+    except (ConnectionError, TimeoutError) as e:
+        app.logger.error(f"Communication error with db-interact for log_drawing: {e}")
+        return jsonify({"error": f"Error communicating with database service: {str(e)}"}), 503
+    except Exception as e:
+        app.logger.error(f"Unexpected error in log_drawing: {e}\n{traceback.format_exc()}")
+        return jsonify({"error": "An internal server error occurred"}), 500
 
 
 @app.route('/log/behavior', methods=['POST'])
@@ -261,7 +269,7 @@ def log_behavior():
     child_id = data.get("childId")
     try:
         db_response = send_log_to_db_interact("behavior", child_id, behavior_details, g.current_user_token)
-        # ... (response handling as before) ...
+        
         try:
             db_response_json = db_response.json()
         except requests.exceptions.JSONDecodeError:
@@ -269,10 +277,14 @@ def log_behavior():
             if db_response.status_code >= 400 :
                  app.logger.error(f"db-interact returned error for behavior log: {db_response.status_code} - {db_response.text[:500]}")
                  return jsonify({"error": "Failed to log behavior via database service", "details": db_response_json}), db_response.status_code
+        
         return jsonify({"message": "Behavior log forwarded to database service", "db_service_response": db_response_json}), db_response.status_code
-    except (ConnectionError, TimeoutError, Exception) as e:
-        app.logger.error(f"Error in log_behavior: {e}")
-        return jsonify({"error": str(e)}), 503
+    except (ConnectionError, TimeoutError) as e:
+        app.logger.error(f"Communication error with db-interact for log_behavior: {e}")
+        return jsonify({"error": f"Error communicating with database service: {str(e)}"}), 503
+    except Exception as e:
+        app.logger.error(f"Unexpected error in log_behavior: {e}\n{traceback.format_exc()}")
+        return jsonify({"error": "An internal server error occurred"}), 500
 
 # --- NEW ENDPOINT to GET activities ---
 @app.route('/activities', methods=['GET'])
@@ -287,7 +299,6 @@ def get_activities():
     if not child_id:
         return jsonify({"error": "Missing required query parameter: child_id"}), 400
 
-    # Optional: pass through other filters if your db-interact /data/activities supports them
     activity_type = request.args.get('type')
     start_date_str = request.args.get('start_date')
     end_date_str = request.args.get('end_date')
@@ -300,28 +311,25 @@ def get_activities():
     if end_date_str:
         params_to_forward['end_date'] = end_date_str
     
-    # child_id is passed as a direct argument to request_get_activities_from_db_interact
-    # and then added to query_params within that function.
-
     try:
         db_response = request_get_activities_from_db_interact(child_id, g.current_user_token, params=params_to_forward)
         
         try:
             db_response_json = db_response.json()
         except requests.exceptions.JSONDecodeError:
-            # If db-interact returns non-JSON (e.g., HTML error page or empty on some errors)
             db_response_json = {"raw_response": db_response.text, "status_code_from_db": db_response.status_code}
             if db_response.status_code >= 400 : 
                  app.logger.error(f"db-interact returned error for GET activities: {db_response.status_code} - {db_response.text[:500]}")
-                 # Forward the error from db-interact
                  return jsonify({"error": "Failed to retrieve activities from database service", "details": db_response_json}), db_response.status_code
         
-        # Forwarding the response (list of activities or error) from db-interact
         return jsonify(db_response_json), db_response.status_code
 
-    except (ConnectionError, TimeoutError, Exception) as e:
-        app.logger.error(f"Error in get_activities while communicating with db-interact: {e}")
-        return jsonify({"error": str(e)}), 503
+    except (ConnectionError, TimeoutError) as e:
+        app.logger.error(f"Communication error with db-interact for get_activities: {e}")
+        return jsonify({"error": f"Error communicating with database service: {str(e)}"}), 503
+    except Exception as e:
+        app.logger.error(f"Unexpected error in get_activities: {e}\n{traceback.format_exc()}")
+        return jsonify({"error": "An internal server error occurred"}), 500
 
 
 @app.route('/health', methods=['GET'])
@@ -331,10 +339,17 @@ def health_check():
 
 
 if __name__ == '__main__':
-    if not app.debug: 
-        stream_handler = logging.StreamHandler()
-        stream_handler.setLevel(logging.INFO)
-        app.logger.addHandler(stream_handler)
+    # Configure basic logging if running directly (e.g., python app.py)
+    # In a container, Gunicorn or Flask CLI might handle logging.
+    if not app.debug or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+        # This check helps avoid duplicate handlers when Flask reloader is active
+        if not any(isinstance(handler, logging.StreamHandler) for handler in app.logger.handlers):
+            stream_handler = logging.StreamHandler()
+            stream_handler.setFormatter(logging.Formatter(
+                '%(asctime)s %(levelname)s: %(message)s [in %(pathname)s:%(lineno)d]'
+            ))
+            app.logger.addHandler(stream_handler)
+            app.logger.setLevel(logging.INFO)
     
     app.logger.info("Activity Log Service starting up (main execution block)...")
     app.logger.info(f"DB Interact Service Target for POST: http://{DB_INTERACT_SERVICE_HOST}:{DB_INTERACT_SERVICE_PORT}{DB_INTERACT_LOG_ACTIVITY_ROUTE}")
